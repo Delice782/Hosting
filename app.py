@@ -246,7 +246,7 @@ def login_page():
                         
                         # Save to persistent storage
                         if save_users(users_db):
-                            st.success(f"✅ Account created successfully! Welcome, {new_username}!")
+                            st.success(f"✅ Account created successfully! WelcomeW, {new_username}!")
                             st.balloons()
                             st.info("👉 Go to the **Login** tab to sign in with your new account")
                         else:
