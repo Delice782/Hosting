@@ -6,32 +6,86 @@ from sklearn.preprocessing import LabelEncoder
 import hashlib
 from datetime import datetime, timedelta
 import random
-
-# Hardcoded users (for demo)
-USERS_DB = {
-    "doctor1": {
-        "password": hashlib.sha256("doc123".encode()).hexdigest(),
-        "role": "Doctor"
-    },
-    "nurse1": {
-        "password": hashlib.sha256("nurse123".encode()).hexdigest(),
-        "role": "Nurse"
-    },
-    "admin": {
-        "password": hashlib.sha256("admin123".encode()).hexdigest(),
-        "role": "Admin"
-    }
-}
+import json
 
 def hash_password(password):
     """Hash password using SHA256"""
     return hashlib.sha256(password.encode()).hexdigest()
 
-def verify_login(username, password):
+def load_users():
+    """Load users from persistent storage"""
+    try:
+        result = st.session_state.get('storage_users')
+        if result is None:
+            # Try to load from persistent storage
+            import asyncio
+            result = asyncio.run(load_users_async())
+        return result
+    except:
+        # Default users if storage fails
+        return {
+            "doctor1": {
+                "password": hash_password("doc123"),
+                "role": "Doctor"
+            },
+            "nurse1": {
+                "password": hash_password("nurse123"),
+                "role": "Nurse"
+            },
+            "admin": {
+                "password": hash_password("admin123"),
+                "role": "Admin"
+            }
+        }
+
+async def load_users_async():
+    """Async function to load users"""
+    try:
+        result = await st.session_state.window.storage.get('hospital_users')
+        if result and result.get('value'):
+            return json.loads(result['value'])
+    except:
+        pass
+    
+    # Return default users
+    return {
+        "doctor1": {
+            "password": hash_password("doc123"),
+            "role": "Doctor"
+        },
+        "nurse1": {
+            "password": hash_password("nurse123"),
+            "role": "Nurse"
+        },
+        "admin": {
+            "password": hash_password("admin123"),
+            "role": "Admin"
+        }
+    }
+
+def save_users(users_dict):
+    """Save users to persistent storage"""
+    try:
+        import asyncio
+        asyncio.run(save_users_async(users_dict))
+        st.session_state.storage_users = users_dict
+        return True
+    except Exception as e:
+        st.error(f"Error saving user: {str(e)}")
+        return False
+
+async def save_users_async(users_dict):
+    """Async function to save users"""
+    try:
+        await st.session_state.window.storage.set('hospital_users', json.dumps(users_dict))
+    except Exception as e:
+        raise e
+
+def verify_login(username, password, users_db):
     """Verify user credentials"""
-    if username in USERS_DB:
-        if USERS_DB[username]["password"] == hash_password(password):
-            return True, USERS_DB[username]["role"]
+    if username in users_db:
+        if users_db[username]["password"] == hash_password(password):
+            return True, users_db[username]["role"]
     return False, None
 
 @st.cache_data
@@ -120,36 +174,83 @@ def train_model():
 def login_page():
     """Display login page"""
     st.title("🏥 Hospital Length of Stay Predictor")
-    st.markdown("### 🔐 Staff Login")
     
-    col1, col2, col3 = st.columns([1, 2, 1])
+    # Load users
+    users_db = load_users()
     
-    with col2:
-        with st.form("login_form"):
-            username = st.text_input("Username", placeholder="Enter your username")
-            password = st.text_input("Password", type="password", placeholder="Enter your password")
-            submit = st.form_submit_button("Login", use_container_width=True)
+    # Tabs for Login and Signup
+    tab1, tab2 = st.tabs(["🔐 Login", "📝 Sign Up"])
+    
+    with tab1:
+        st.markdown("### Login to Your Account")
+        
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col2:
+            with st.form("login_form"):
+                username = st.text_input("Username", placeholder="Enter your username")
+                password = st.text_input("Password", type="password", placeholder="Enter your password")
+                submit = st.form_submit_button("Login", use_container_width=True)
+                
+                if submit:
+                    is_valid, role = verify_login(username, password, users_db)
+                    if is_valid:
+                        st.session_state.logged_in = True
+                        st.session_state.username = username
+                        st.session_state.role = role
+                        st.success(f"✅ Welcome back, {username}!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Invalid username or password")
             
-            if submit:
-                is_valid, role = verify_login(username, password)
-                if is_valid:
-                    st.session_state.logged_in = True
-                    st.session_state.username = username
-                    st.session_state.role = role
-                    st.success(f"Welcome {username}!")
-                    st.rerun()
-                else:
-                    st.error("❌ Invalid username or password")
+            st.info("""
+            **Demo Accounts:**
+            
+            👨‍⚕️ `doctor1` / `doc123`
+            
+            👩‍⚕️ `nurse1` / `nurse123`
+            
+            👤 `admin` / `admin123`
+            """)
+    
+    with tab2:
+        st.markdown("### Create New Account")
         
-        st.info("""
-        **Demo Credentials:**
+        col1, col2, col3 = st.columns([1, 2, 1])
         
-        👨‍⚕️ Doctor: `doctor1` / `doc123`
-        
-        👩‍⚕️ Nurse: `nurse1` / `nurse123`
-        
-        👤 Admin: `admin` / `admin123`
-        """)
+        with col2:
+            with st.form("signup_form"):
+                new_username = st.text_input("Choose Username", placeholder="Enter username")
+                new_password = st.text_input("Choose Password", type="password", placeholder="Min 6 characters")
+                confirm_password = st.text_input("Confirm Password", type="password", placeholder="Re-enter password")
+                role = st.selectbox("Select Role", ["Doctor", "Nurse", "Admin", "Staff"])
+                
+                signup_submit = st.form_submit_button("Create Account", use_container_width=True)
+                
+                if signup_submit:
+                    # Validation
+                    if not new_username or not new_password:
+                        st.error("❌ Please fill in all fields")
+                    elif new_username in users_db:
+                        st.error("❌ Username already exists! Please choose another.")
+                    elif len(new_password) < 6:
+                        st.error("❌ Password must be at least 6 characters")
+                    elif new_password != confirm_password:
+                        st.error("❌ Passwords don't match!")
+                    else:
+                        # Add new user
+                        users_db[new_username] = {
+                            "password": hash_password(new_password),
+                            "role": role
+                        }
+                        
+                        # Save to persistent storage
+                        if save_users(users_db):
+                            st.success(f"✅ Account created successfully! Welcome, {new_username}!")
+                            st.balloons()
+                            st.info("👉 Go to the **Login** tab to sign in with your new account")
+                        else:
+                            st.warning("⚠️ Account created but may not persist. Please note your credentials.")
 
 def predict_los(age, severity, department, num_comorbidities, previous_admissions, model, le_severity, le_department):
     """Make prediction for patient length of stay"""
