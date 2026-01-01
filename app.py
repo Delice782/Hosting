@@ -2,7 +2,8 @@ import streamlit as st
 import sqlite3
 import hashlib
 
-# --- DATABASE FUNCTIONS ---
+# --- DATABASE SETUP ---
+# This creates a file named 'users.db' in your folder automatically
 def create_usertable():
     conn = sqlite3.connect('users.db')
     c = conn.cursor()
@@ -24,24 +25,29 @@ def login_user(username, password):
     data = c.fetchall()
     return data
 
+# Security: Hash passwords so they aren't stored as plain text
 def make_hashes(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
 
-# --- APP LAYOUT ---
+# --- MAIN APP INTERFACE ---
 def main():
-    st.title("Capstone Project Portal")
+    st.set_page_config(page_title="Capstone Project", layout="centered")
+    st.title("🔒 Capstone Team Portal")
+    
     create_usertable()
 
+    # Initialize session state so the app "remembers" you are logged in
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
 
     if not st.session_state['logged_in']:
-        menu = ["Login", "SignUp"]
-        choice = st.sidebar.selectbox("Menu", menu)
+        # sidebar menu for Login or Signup
+        menu = ["Login", "Sign Up"]
+        choice = st.sidebar.selectbox("Access Menu", menu)
 
         if choice == "Login":
-            st.subheader("Login Section")
-            username = st.text_input("User Name")
+            st.subheader("Login to your Account")
+            username = st.text_input("Username")
             password = st.text_input("Password", type='password')
             
             if st.button("Login"):
@@ -50,28 +56,34 @@ def main():
                 if result:
                     st.session_state['logged_in'] = True
                     st.session_state['username'] = username
+                    st.success(f"Welcome back, {username}!")
                     st.rerun()
                 else:
-                    st.error("Incorrect Username/Password")
+                    st.error("Invalid Username or Password")
 
-        elif choice == "SignUp":
-            st.subheader("Create New Account")
-            new_user = st.text_input("Username")
-            new_password = st.text_input("Password", type='password')
+        elif choice == "Sign Up":
+            st.subheader("Create a New Account")
+            new_user = st.text_input("Choose a Username")
+            new_password = st.text_input("Choose a Password", type='password')
 
-            if st.button("Signup"):
-                add_userdata(new_user, make_hashes(new_password))
-                st.success("You have successfully created an account!")
-                st.info("Go to Login Menu to login")
+            if st.button("Register"):
+                if new_user and new_password:
+                    add_userdata(new_user, make_hashes(new_password))
+                    st.success("Account created successfully!")
+                    st.info("You can now go to the Login tab.")
+                else:
+                    st.warning("Please fill out both fields.")
     else:
-        # --- LOGGED IN AREA ---
-        st.sidebar.success(f"Logged in as {st.session_state['username']}")
+        # --- LOGGED IN VIEW ---
+        st.sidebar.success(f"Logged in as: {st.session_state['username']}")
         if st.sidebar.button("Logout"):
             st.session_state['logged_in'] = False
             st.rerun()
             
-        st.write("### Welcome to the internal app area!")
-        # Add your capstone project tools here
+        st.write("---")
+        st.header("Capstone Workspace")
+        st.write("This content is only visible to registered users.")
+        # You can add your data collection forms or project charts here!
 
 if __name__ == '__main__':
     main()
