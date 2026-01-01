@@ -1,23 +1,25 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.datasets import load_iris
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import LabelEncoder
 import hashlib
-import json
+from datetime import datetime, timedelta
+import random
 
-# Simple user database (in production, use a real database)
-# Password: all passwords are hashed
+# Hardcoded users (for demo)
 USERS_DB = {
+    "doctor1": {
+        "password": hashlib.sha256("doc123".encode()).hexdigest(),
+        "role": "Doctor"
+    },
+    "nurse1": {
+        "password": hashlib.sha256("nurse123".encode()).hexdigest(),
+        "role": "Nurse"
+    },
     "admin": {
         "password": hashlib.sha256("admin123".encode()).hexdigest(),
-        "role": "admin"
-    },
-    "user1": {
-        "password": hashlib.sha256("user123".encode()).hexdigest(),
-        "role": "user"
+        "role": "Admin"
     }
 }
 
@@ -32,166 +34,292 @@ def verify_login(username, password):
             return True, USERS_DB[username]["role"]
     return False, None
 
-def login_page():
-    """Display login page"""
-    st.title("🔐 ML Demo - Login")
-    st.markdown("### Please login to access the ML model")
-    
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submit = st.form_submit_button("Login")
-        
-        if submit:
-            is_valid, role = verify_login(username, password)
-            if is_valid:
-                st.session_state.logged_in = True
-                st.session_state.username = username
-                st.session_state.role = role
-                st.success(f"Welcome {username}!")
-                st.rerun()
-            else:
-                st.error("Invalid username or password")
-    
-    st.info("**Demo Credentials:**\n\n- Username: `admin` | Password: `admin123`\n\n- Username: `user1` | Password: `user123`")
-
-def signup_page():
-    """Simple signup page (for demo purposes)"""
-    st.title("📝 Sign Up")
-    st.markdown("### Create a new account")
-    
-    with st.form("signup_form"):
-        new_username = st.text_input("Choose Username")
-        new_password = st.text_input("Choose Password", type="password")
-        confirm_password = st.text_input("Confirm Password", type="password")
-        submit = st.form_submit_button("Sign Up")
-        
-        if submit:
-            if new_username in USERS_DB:
-                st.error("Username already exists!")
-            elif new_password != confirm_password:
-                st.error("Passwords don't match!")
-            elif len(new_password) < 6:
-                st.error("Password must be at least 6 characters!")
-            else:
-                # In production, save to database
-                USERS_DB[new_username] = {
-                    "password": hash_password(new_password),
-                    "role": "user"
-                }
-                st.success("Account created! Please login.")
-                st.balloons()
-
 @st.cache_data
-def load_data():
-    """Load Iris dataset"""
-    iris = load_iris()
-    df = pd.DataFrame(iris.data, columns=iris.feature_names)
-    df['species'] = iris.target
-    df['species_name'] = df['species'].map({0: 'Setosa', 1: 'Versicolor', 2: 'Virginica'})
-    return df, iris
+def generate_training_data():
+    """Generate synthetic patient data for training"""
+    np.random.seed(42)
+    n_samples = 500
+    
+    # Generate features
+    ages = np.random.randint(18, 90, n_samples)
+    severity = np.random.choice(['Mild', 'Moderate', 'Severe', 'Critical'], n_samples, p=[0.3, 0.4, 0.2, 0.1])
+    departments = np.random.choice(['Emergency', 'Surgery', 'ICU', 'General Ward'], n_samples, p=[0.25, 0.25, 0.15, 0.35])
+    num_comorbidities = np.random.randint(0, 5, n_samples)
+    previous_admissions = np.random.randint(0, 8, n_samples)
+    
+    # Generate length of stay based on features (with some logic)
+    los = []
+    for i in range(n_samples):
+        base_los = 3
+        
+        # Age factor
+        if ages[i] > 70:
+            base_los += 2
+        elif ages[i] < 30:
+            base_los += 1
+            
+        # Severity factor
+        if severity[i] == 'Critical':
+            base_los += 8
+        elif severity[i] == 'Severe':
+            base_los += 5
+        elif severity[i] == 'Moderate':
+            base_los += 2
+            
+        # Department factor
+        if departments[i] == 'ICU':
+            base_los += 6
+        elif departments[i] == 'Surgery':
+            base_los += 3
+            
+        # Comorbidities
+        base_los += num_comorbidities[i] * 1.5
+        
+        # Previous admissions
+        base_los += previous_admissions[i] * 0.5
+        
+        # Add some randomness
+        base_los += np.random.normal(0, 2)
+        
+        los.append(max(1, int(base_los)))
+    
+    df = pd.DataFrame({
+        'Age': ages,
+        'Severity': severity,
+        'Department': departments,
+        'Num_Comorbidities': num_comorbidities,
+        'Previous_Admissions': previous_admissions,
+        'Length_of_Stay': los
+    })
+    
+    return df
 
 @st.cache_resource
 def train_model():
-    """Train ML model"""
-    iris = load_iris()
-    X_train, X_test, y_train, y_test = train_test_split(
-        iris.data, iris.target, test_size=0.2, random_state=42
-    )
+    """Train the prediction model"""
+    df = generate_training_data()
     
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(X_train, y_train)
+    # Encode categorical variables
+    le_severity = LabelEncoder()
+    le_department = LabelEncoder()
     
-    y_pred = model.predict(X_test)
-    accuracy = accuracy_score(y_test, y_pred)
+    df_encoded = df.copy()
+    df_encoded['Severity_Encoded'] = le_severity.fit_transform(df['Severity'])
+    df_encoded['Department_Encoded'] = le_department.fit_transform(df['Department'])
     
-    return model, accuracy, X_test, y_test
+    # Features and target
+    X = df_encoded[['Age', 'Severity_Encoded', 'Department_Encoded', 'Num_Comorbidities', 'Previous_Admissions']]
+    y = df_encoded['Length_of_Stay']
+    
+    # Train model
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
+    model.fit(X, y)
+    
+    return model, le_severity, le_department, df
 
-def ml_dashboard():
-    """Main ML dashboard after login"""
-    st.title("🌸 Iris Species Classifier")
-    st.markdown(f"**Logged in as:** {st.session_state.username} ({st.session_state.role})")
+def login_page():
+    """Display login page"""
+    st.title("🏥 Hospital Length of Stay Predictor")
+    st.markdown("### 🔐 Staff Login")
     
-    if st.button("Logout", type="secondary"):
-        st.session_state.logged_in = False
-        st.session_state.username = None
-        st.session_state.role = None
-        st.rerun()
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        with st.form("login_form"):
+            username = st.text_input("Username", placeholder="Enter your username")
+            password = st.text_input("Password", type="password", placeholder="Enter your password")
+            submit = st.form_submit_button("Login", use_container_width=True)
+            
+            if submit:
+                is_valid, role = verify_login(username, password)
+                if is_valid:
+                    st.session_state.logged_in = True
+                    st.session_state.username = username
+                    st.session_state.role = role
+                    st.success(f"Welcome {username}!")
+                    st.rerun()
+                else:
+                    st.error("❌ Invalid username or password")
+        
+        st.info("""
+        **Demo Credentials:**
+        
+        👨‍⚕️ Doctor: `doctor1` / `doc123`
+        
+        👩‍⚕️ Nurse: `nurse1` / `nurse123`
+        
+        👤 Admin: `admin` / `admin123`
+        """)
+
+def predict_los(age, severity, department, num_comorbidities, previous_admissions, model, le_severity, le_department):
+    """Make prediction for patient length of stay"""
+    # Encode inputs
+    severity_encoded = le_severity.transform([severity])[0]
+    department_encoded = le_department.transform([department])[0]
+    
+    # Create feature array
+    features = np.array([[age, severity_encoded, department_encoded, num_comorbidities, previous_admissions]])
+    
+    # Predict
+    prediction = model.predict(features)[0]
+    
+    return max(1, int(round(prediction)))
+
+def patient_entry_form():
+    """Form for entering new patient data"""
+    st.subheader("📋 Enter Patient Information")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        patient_id = st.text_input("Patient ID", placeholder="e.g., P12345")
+        age = st.number_input("Age", min_value=0, max_value=120, value=45)
+        severity = st.selectbox("Condition Severity", ['Mild', 'Moderate', 'Severe', 'Critical'])
+        
+    with col2:
+        department = st.selectbox("Department", ['Emergency', 'Surgery', 'ICU', 'General Ward'])
+        num_comorbidities = st.number_input("Number of Comorbidities", min_value=0, max_value=10, value=1)
+        previous_admissions = st.number_input("Previous Admissions", min_value=0, max_value=20, value=0)
+    
+    return patient_id, age, severity, department, num_comorbidities, previous_admissions
+
+def main_dashboard():
+    """Main dashboard after login"""
+    st.title("🏥 Hospital Length of Stay Prediction System")
+    
+    # Header with user info
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        st.markdown(f"**Logged in as:** {st.session_state.username} ({st.session_state.role})")
+    with col3:
+        if st.button("🚪 Logout"):
+            st.session_state.logged_in = False
+            st.session_state.username = None
+            st.session_state.role = None
+            st.rerun()
     
     st.markdown("---")
     
-    # Load data and model
-    df, iris = load_data()
-    model, accuracy, X_test, y_test = train_model()
+    # Load model
+    model, le_severity, le_department, training_data = train_model()
     
     # Tabs
-    tab1, tab2, tab3 = st.tabs(["📊 Dataset Explorer", "🤖 Model Prediction", "📈 Model Performance"])
+    tab1, tab2, tab3 = st.tabs(["🔮 New Prediction", "📊 Patient History", "📈 Model Info"])
     
     with tab1:
-        st.subheader("Iris Dataset")
-        st.dataframe(df.head(10))
+        st.markdown("### Predict Patient Length of Stay")
         
-        st.subheader("Dataset Statistics")
-        st.write(df.describe())
+        # Patient entry form
+        patient_id, age, severity, department, num_comorbidities, previous_admissions = patient_entry_form()
         
-        st.subheader("Species Distribution")
-        species_counts = df['species_name'].value_counts()
-        st.bar_chart(species_counts)
-    
-    with tab2:
-        st.subheader("Make a Prediction")
-        st.write("Enter flower measurements to predict the species:")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            sepal_length = st.slider("Sepal Length (cm)", 4.0, 8.0, 5.8, 0.1)
-            sepal_width = st.slider("Sepal Width (cm)", 2.0, 4.5, 3.0, 0.1)
+        col1, col2, col3 = st.columns([1, 1, 1])
         
         with col2:
-            petal_length = st.slider("Petal Length (cm)", 1.0, 7.0, 4.0, 0.1)
-            petal_width = st.slider("Petal Width (cm)", 0.1, 2.5, 1.3, 0.1)
+            if st.button("🔮 Predict Length of Stay", type="primary", use_container_width=True):
+                if not patient_id:
+                    st.error("Please enter a Patient ID")
+                else:
+                    # Make prediction
+                    predicted_days = predict_los(age, severity, department, num_comorbidities, previous_admissions, model, le_severity, le_department)
+                    
+                    # Calculate estimated discharge date
+                    admission_date = datetime.now()
+                    discharge_date = admission_date + timedelta(days=predicted_days)
+                    
+                    # Display results
+                    st.success("### Prediction Complete! ✅")
+                    
+                    # Result cards
+                    res_col1, res_col2, res_col3 = st.columns(3)
+                    
+                    with res_col1:
+                        st.metric("Predicted Length of Stay", f"{predicted_days} days")
+                    
+                    with res_col2:
+                        st.metric("Admission Date", admission_date.strftime("%Y-%m-%d"))
+                    
+                    with res_col3:
+                        st.metric("Est. Discharge Date", discharge_date.strftime("%Y-%m-%d"))
+                    
+                    # Patient summary
+                    st.markdown("---")
+                    st.markdown("#### 📋 Patient Summary")
+                    summary_df = pd.DataFrame({
+                        'Field': ['Patient ID', 'Age', 'Severity', 'Department', 'Comorbidities', 'Previous Admissions'],
+                        'Value': [patient_id, age, severity, department, num_comorbidities, previous_admissions]
+                    })
+                    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+                    
+                    # Risk assessment
+                    if predicted_days <= 3:
+                        risk_level = "🟢 Low Risk - Short Stay Expected"
+                    elif predicted_days <= 7:
+                        risk_level = "🟡 Moderate Risk - Standard Stay"
+                    elif predicted_days <= 14:
+                        risk_level = "🟠 High Risk - Extended Stay"
+                    else:
+                        risk_level = "🔴 Critical Risk - Long-term Care Needed"
+                    
+                    st.info(f"**Risk Assessment:** {risk_level}")
+    
+    with tab2:
+        st.subheader("📊 Recent Predictions")
         
-        if st.button("🔮 Predict Species", type="primary"):
-            input_data = np.array([[sepal_length, sepal_width, petal_length, petal_width]])
-            prediction = model.predict(input_data)
-            prediction_proba = model.predict_proba(input_data)
-            
-            species_names = ['Setosa', 'Versicolor', 'Virginica']
-            predicted_species = species_names[prediction[0]]
-            
-            st.success(f"### Predicted Species: **{predicted_species}** 🌸")
-            
-            st.subheader("Prediction Confidence")
-            proba_df = pd.DataFrame({
-                'Species': species_names,
-                'Probability': prediction_proba[0]
-            })
-            st.bar_chart(proba_df.set_index('Species'))
+        # Show sample patient data
+        sample_data = training_data.sample(10).sort_values('Length_of_Stay', ascending=False)
+        sample_data['Patient_ID'] = [f"P{random.randint(10000, 99999)}" for _ in range(10)]
+        
+        display_cols = ['Patient_ID', 'Age', 'Severity', 'Department', 'Num_Comorbidities', 'Previous_Admissions', 'Length_of_Stay']
+        st.dataframe(sample_data[display_cols], use_container_width=True, hide_index=True)
+        
+        # Statistics
+        st.markdown("---")
+        st.subheader("📈 Statistics")
+        
+        stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
+        
+        with stat_col1:
+            st.metric("Avg Length of Stay", f"{training_data['Length_of_Stay'].mean():.1f} days")
+        with stat_col2:
+            st.metric("Min Stay", f"{training_data['Length_of_Stay'].min()} days")
+        with stat_col3:
+            st.metric("Max Stay", f"{training_data['Length_of_Stay'].max()} days")
+        with stat_col4:
+            st.metric("Total Patients", len(training_data))
     
     with tab3:
-        st.subheader("Model Performance")
-        st.metric("Model Accuracy", f"{accuracy:.2%}")
+        st.subheader("🤖 Model Information")
         
-        st.write("**Model Details:**")
-        st.write(f"- Algorithm: Random Forest Classifier")
-        st.write(f"- Number of Trees: 100")
-        st.write(f"- Training/Test Split: 80/20")
+        st.write("**Algorithm:** Random Forest Regressor")
+        st.write("**Training Samples:** 500 patients")
+        st.write("**Features Used:**")
+        st.markdown("""
+        - Patient Age
+        - Condition Severity (Mild, Moderate, Severe, Critical)
+        - Department (Emergency, Surgery, ICU, General Ward)
+        - Number of Comorbidities
+        - Previous Hospital Admissions
+        """)
+        
+        st.markdown("---")
+        st.subheader("📊 Feature Importance")
         
         # Feature importance
-        st.subheader("Feature Importance")
-        feature_importance = pd.DataFrame({
-            'Feature': iris.feature_names,
+        feature_names = ['Age', 'Severity', 'Department', 'Comorbidities', 'Previous Admissions']
+        importance_df = pd.DataFrame({
+            'Feature': feature_names,
             'Importance': model.feature_importances_
         }).sort_values('Importance', ascending=False)
         
-        st.bar_chart(feature_importance.set_index('Feature'))
+        st.bar_chart(importance_df.set_index('Feature'))
+        
+        st.info("💡 **Note:** This is a demonstration model using synthetic data. In production, this would be trained on real historical patient data.")
 
 def main():
-    """Main app"""
+    """Main app entry point"""
     st.set_page_config(
-        page_title="ML Demo with Auth",
-        page_icon="🤖",
+        page_title="Hospital LOS Predictor",
+        page_icon="🏥",
         layout="wide"
     )
     
@@ -199,16 +327,11 @@ def main():
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
     
-    # Show appropriate page
+    # Route to appropriate page
     if not st.session_state.logged_in:
-        page = st.sidebar.radio("Navigation", ["Login", "Sign Up"])
-        
-        if page == "Login":
-            login_page()
-        else:
-            signup_page()
+        login_page()
     else:
-        ml_dashboard()
+        main_dashboard()
 
 if __name__ == "__main__":
     main()
